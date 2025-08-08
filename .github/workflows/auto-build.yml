@@ -112,7 +112,6 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NGINX_VERSION=${{ steps.nginx_latest.outputs.latest_nginx_version }}
           cache-from: type=gha # Cache from GitHub Actions cache
