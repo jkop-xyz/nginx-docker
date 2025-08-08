@@ -1,143 +1,156 @@
-name: Auto Update Custom Nginx Image (Alpine)
+name: Build and Push Nginx Image
 
 on:
-  workflow_dispatch: # Allow manual trigger
+  push:
+    branches: [main]
   schedule:
-    - cron: '0 0 * * *' # Run daily at midnight UTC
+    # Run every day at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # e.g., your-github-user/your-nginx-repo
+  IMAGE_NAME: ${{ github.repository }}/nginx-stream
 
 jobs:
-  check_and_build:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.version-check.outputs.should-build }}
+      nginx-version: ${{ steps.version-check.outputs.nginx-version }}
+    steps:
+      - name: Check nginx version
+        id: version-check
+        run: |
+          # Get latest nginx version from Alpine package repository
+          LATEST_VERSION=$(wget -qO- "https://pkgs.alpinelinux.org/packages?name=nginx&branch=edge&repo=main&arch=x86_64" | grep -oP 'nginx-\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          
+          # Get current image version from registry (if exists)
+          CURRENT_VERSION=""
+          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
+            CURRENT_VERSION=$(docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest nginx -v 2>&1 | grep -oP 'nginx/\K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          fi
+          
+          echo "Latest version: $LATEST_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+          echo "nginx-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should-build=true" >> $GITHUB_OUTPUT
+            echo "New version detected or manual trigger - will build"
+          else
+            echo "should-build=false" >> $GITHUB_OUTPUT
+            echo "No new version - skipping build"
+          fi
+
+  build-and-push:
+    needs: check-version
+    if: needs.check-version.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write # Required to push to GHCR
-      security-events: write # Required for Trivy SARIF upload
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (for multi-arch builds if needed)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all # Or specific platforms like linux/amd64,linux/arm64
-
-      - name: Set up Docker Buildx (for caching and multi-arch)
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
+      - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get latest Nginx stable version from nginx.org
-        id: nginx_latest
-        run: |
-          LATEST_VERSION=$(curl -s "https://nginx.org/en/download.html" | \
-                           grep "Stable version" -A 1 | \
-                           grep -oP 'nginx-\K[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
-          if [ -z "$LATEST_VERSION" ]; then
-            echo "::error::Could not determine latest Nginx version from nginx.org"
-            exit 1
-          fi
-          echo "latest_nginx_version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest stable Nginx version detected: $LATEST_VERSION"
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.check-version.outputs.nginx-version }},enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Nginx with Stream Module
+            org.opencontainers.image.description=Alpine-based Nginx with stream module for TCP/UDP load balancing
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            nginx.version=${{ needs.check-version.outputs.nginx-version }}
 
-      - name: Get current Nginx version in our latest image
-        id: current_image_nginx
-        run: |
-          CURRENT_VERSION=""
-          if docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" &>/dev/null; then
-            CURRENT_VERSION=$(docker inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-                              --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
-                              2>/dev/null || echo "")
-            echo "Current image Nginx version (from label): $CURRENT_VERSION"
-          else
-            echo "No 'latest' image found or unable to pull. Assuming no current version."
-          fi
-          echo "current_nginx_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Compare Nginx versions
-        id: version_compare
-        run: |
-          LATEST="${{ steps.nginx_latest.outputs.latest_nginx_version }}"
-          CURRENT="${{ steps.current_image_nginx.outputs.current_nginx_version }}"
-
-          if [ -z "$LATEST" ]; then
-            echo "::error::Latest Nginx version not found. Exiting."
-            exit 1
-          fi
-
-          if [ -z "$CURRENT" ]; then
-            echo "No existing custom Nginx image found. Building the first one."
-            echo "build_needed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$(printf '%s\n' "$LATEST" "$CURRENT" | sort -V | head -n 1)" = "$CURRENT" ] && [ "$LATEST" != "$CURRENT" ]; then
-            echo "Newer Nginx version detected: $LATEST > $CURRENT. A build is needed."
-            echo "build_needed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Current image Nginx version ($CURRENT) is up-to-date with latest stable ($LATEST). No build needed."
-            echo "build_needed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # ----------------------------------------------------------------------
-      # TEMPORARILY DISABLE THIS STEP TO ISOLATE THE ERROR
-      # Comment out the entire 'Set Image Tags and Labels' step
-      # You can uncomment it later if this fixes the problem
-      # - name: Set Image Tags and Labels
-      #   id: meta
-      #   if: steps.version_compare.outputs.build_needed == 'true'
-      #   uses: docker/metadata-action@v5
-      #   with:
-      #     images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-      #     tags: |
-      #       type=raw,value=${{ steps.nginx_latest.outputs.latest_nginx_version }}
-      #       type=raw,value=latest
-      # ----------------------------------------------------------------------
-
-      - name: Build and Push Docker Image
-        if: steps.version_compare.outputs.build_needed == 'true'
+      - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
-          # ---------------------------------------------------------------------
-          # TEMPORARILY HARDCODE TAGS AND BUILD-ARGS TO ISOLATE THE PROBLEM
-          # If this works, the issue is with how steps.meta.outputs.tags or
-          # steps.nginx_latest.outputs.latest_nginx_version is being formed.
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-static-version
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-test
-          build-args: |
-            NGINX_VERSION=1.24.0 # Hardcode a specific Nginx version for this test
-          # ---------------------------------------------------------------------
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
-      - name: Trivy Container Image Scan
-        # This step will scan 'test-static-version' if the previous step pushed it successfully.
-        # Adjust image-ref to match the temporary tag.
-        if: steps.version_compare.outputs.build_needed == 'true'
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nginx-${{ needs.check-version.outputs.nginx-version }}
+          name: Nginx ${{ needs.check-version.outputs.nginx-version }}
+          body: |
+            🚀 **Automated build with nginx version ${{ needs.check-version.outputs.nginx-version }}**
+            
+            ## Features
+            - ✅ Alpine Linux base (minimal size)
+            - ✅ Nginx with stream module enabled
+            - ✅ Multi-architecture support (amd64, arm64)
+            - ✅ Security hardened configuration
+            - ✅ Performance optimizations
+            - ✅ Health check endpoint at `/health`
+            
+            ## Usage
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.check-version.outputs.nginx-version }}
+            docker run -p 80:80 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ```
+            
+            ## Image Details
+            - **Registry**: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
+            - **Tags**: `latest`, `${{ needs.check-version.outputs.nginx-version }}`
+            - **Digest**: `${{ steps.build.outputs.digest }}`
+          generate_release_notes: true
+          make_latest: true
+
+  security-scan:
+    needs: [check-version, build-and-push]
+    if: needs.check-version.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    
+    steps:
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test-static-version' # Adjusted for temporary tag
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'HIGH,CRITICAL'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          scanners: 'vuln,secret'
 
-      - name: Upload Trivy Scan Results to GitHub Security Tab
-        if: always() && steps.version_compare.outputs.build_needed == 'true' && github.event_name != 'workflow_dispatch'
+      - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: 'trivy-results.sarif'
