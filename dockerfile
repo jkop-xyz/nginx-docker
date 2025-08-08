@@ -118,7 +118,7 @@ EXPOSE 80 443
 LABEL org.opencontainers.image.version=${NGINX_VERSION} \
       org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" \
       org.opencontainers.image.url="https://github.com/${GITHUB_REPOSITORY}" \
-      org.opencontainers.image.licenses="MIT" # Adjust if your project uses a different license
+      org.opencontainers.image.licenses="MIT"
 
 # Define default command to run Nginx
 # Using `-g 'daemon off;'` to run in foreground for Docker compatibility
