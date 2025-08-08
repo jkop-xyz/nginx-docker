@@ -1,5 +1,5 @@
 # Dockerfile: Custom Nginx with ngx_brotli on Alpine
-ARG NGINX_VERSION=1.24.0 # Default, overridden by build-arg in CI/CD
+ARG NGINX_VERSION=1.28.0 # Default, overridden by build-arg in CI/CD
 ARG BROTLI_VERSION=1.0.9
 
 # Stage 1: Build Nginx with custom modules
