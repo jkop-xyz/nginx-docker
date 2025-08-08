@@ -19,6 +19,12 @@ RUN mkdir -p /var/log/nginx \
     && chown -R nginx:nginx /usr/share/nginx/html \
     && chown -R nginx:nginx /run/nginx
 
+# Forward request and error logs to docker log collector
+# Keep original files for potential volume mounting while also sending to stdout/stderr
+RUN ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log \
+    && ln -sf /dev/stdout /var/log/nginx/stream.log
+
 # Create a simple index page
 RUN echo '<h1>Nginx with Stream Module</h1><p>Ready to serve!</p>' > /usr/share/nginx/html/index.html \
     && chown nginx:nginx /usr/share/nginx/html/index.html
@@ -33,5 +39,5 @@ EXPOSE 80 443
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
 
-# Start nginx as root (it will drop privileges for worker processes)
+# Run as root (nginx will drop privileges for worker processes)
 CMD ["nginx", "-g", "daemon off;"]
