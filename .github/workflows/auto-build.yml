@@ -31,34 +31,43 @@ jobs:
           
           echo "Detected nginx version: $LATEST_VERSION"
           
-          # Validate version format using basic regex
+          # Validate version format
           if ! echo "$LATEST_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null; then
             echo "Invalid version format: $LATEST_VERSION"
             exit 1
           fi
           
-          # Get current image version from registry (if exists)
-          CURRENT_VERSION=""
-          echo "Checking current image version..."
-          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
-            echo "Image exists, checking version..."
-            CURRENT_VERSION=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' || echo "")
+          # Check if we already have an image with this specific version tag
+          echo "Checking if version-specific image already exists..."
+          VERSION_EXISTS="false"
+          
+          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$LATEST_VERSION >/dev/null 2>&1; then
+            VERSION_EXISTS="true"
+            echo "Image with version $LATEST_VERSION already exists"
           else
-            echo "No existing image found"
+            echo "No image found for version $LATEST_VERSION"
           fi
           
-          echo "Latest version: $LATEST_VERSION"
-          echo "Current version: $CURRENT_VERSION"
-          
+          # Set output
           echo "nginx-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           
-          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should-build=true" >> $GITHUB_OUTPUT
-            echo "New version detected or manual trigger - will build"
+          # Determine if we should build
+          SHOULD_BUILD="false"
+          
+          # Always build on push or manual trigger
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SHOULD_BUILD="true"
+            echo "Manual trigger or push event - will build"
+          # Build if version-specific image doesn't exist
+          elif [ "$VERSION_EXISTS" = "false" ]; then
+            SHOULD_BUILD="true"
+            echo "Version $LATEST_VERSION not found in registry - will build"
           else
-            echo "should-build=false" >> $GITHUB_OUTPUT
-            echo "No new version - skipping build"
+            SHOULD_BUILD="false"
+            echo "Version $LATEST_VERSION already exists in registry - skipping build"
           fi
+          
+          echo "should-build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
 
   build-and-push:
     needs: check-version
