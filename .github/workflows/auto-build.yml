@@ -105,10 +105,11 @@ jobs:
             type=raw,value=latest
           labels: |
             org.opencontainers.image.version=${{ steps.nginx_latest.outputs.latest_nginx_version }}
-            org.opencontainers.image.source=${{ github.repositoryUrl }}
-            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
-            org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT # Adjust if different
+            # The 'org.opencontainers.image.source', 'org.opencontainers.image.created',
+            # and 'org.opencontainers.image.revision' labels are automatically added
+            # by docker/metadata-action based on the git context.
+            # Do NOT add them here explicitly referencing `steps.meta.outputs.created` etc.
 
       - name: Build and Push Docker Image
         if: steps.version_compare.outputs.build_needed == 'true'
