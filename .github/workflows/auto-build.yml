@@ -26,13 +26,13 @@ jobs:
           echo "Getting nginx version from Alpine..."
           LATEST_VERSION=$(docker run --rm alpine:latest sh -c '
             apk add --no-cache nginx >/dev/null 2>&1
-            nginx -v 2>&1 | grep -oP "nginx/\K[0-9]+\.[0-9]+\.[0-9]+"
+            nginx -v 2>&1 | sed -n "s/.*nginx\/\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p"
           ')
           
           echo "Detected nginx version: $LATEST_VERSION"
           
-          # Validate version format
-          if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          # Validate version format using basic regex
+          if ! echo "$LATEST_VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' >/dev/null; then
             echo "Invalid version format: $LATEST_VERSION"
             exit 1
           fi
@@ -42,7 +42,7 @@ jobs:
           echo "Checking current image version..."
           if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
             echo "Image exists, checking version..."
-            CURRENT_VERSION=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest nginx -v 2>&1 | grep -oP 'nginx/\K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+            CURRENT_VERSION=$(docker run --rm --entrypoint="" ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' || echo "")
           else
             echo "No existing image found"
           fi
@@ -76,7 +76,7 @@ jobs:
 
       - name: Validate nginx version
         run: |
-          if [[ ! "${{ needs.check-version.outputs.nginx-version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if ! echo "${{ needs.check-version.outputs.nginx-version }}" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "Invalid nginx version: ${{ needs.check-version.outputs.nginx-version }}"
             exit 1
           fi
