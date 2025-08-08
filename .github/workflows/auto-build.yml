@@ -164,9 +164,13 @@ jobs:
     if: needs.check-version.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
     
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
