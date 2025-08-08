@@ -8,17 +8,19 @@ RUN apk add --no-cache \
     tzdata \
     && rm -rf /var/cache/apk/*
 
-# Create nginx user and directories with proper permissions
-RUN adduser -D -S -h /var/cache/nginx -s /sbin/nologin -G nginx nginx \
-    && mkdir -p /var/log/nginx \
+# Create directories with proper permissions
+# Note: nginx user/group is already created by the nginx package
+RUN mkdir -p /var/log/nginx \
     && mkdir -p /var/cache/nginx \
     && mkdir -p /etc/nginx/conf.d \
     && mkdir -p /usr/share/nginx/html \
     && chown -R nginx:nginx /var/cache/nginx \
-    && chown -R nginx:nginx /var/log/nginx
+    && chown -R nginx:nginx /var/log/nginx \
+    && chown -R nginx:nginx /usr/share/nginx/html
 
 # Create a simple index page
-RUN echo '<h1>Nginx with Stream Module</h1><p>Ready to serve!</p>' > /usr/share/nginx/html/index.html
+RUN echo '<h1>Nginx with Stream Module</h1><p>Ready to serve!</p>' > /usr/share/nginx/html/index.html \
+    && chown nginx:nginx /usr/share/nginx/html/index.html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
