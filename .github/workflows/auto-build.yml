@@ -3,6 +3,10 @@ name: Build and Push Nginx Image
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/build-nginx.yml'
+      - 'Dockerfile'
+      - 'nginx.conf'
   schedule:
     # Run every day at 2 AM UTC
     - cron: "0 2 * * *"
@@ -54,11 +58,13 @@ jobs:
           # Determine if we should build
           SHOULD_BUILD="false"
           
-          # Always build on push or manual trigger
-          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # Only build on manual trigger or when version doesn't exist
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             SHOULD_BUILD="true"
-            echo "Manual trigger or push event - will build"
-          # Build if version-specific image doesn't exist
+            echo "Manual trigger - will build"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            SHOULD_BUILD="true"
+            echo "Configuration files changed - will build"
           elif [ "$VERSION_EXISTS" = "false" ]; then
             SHOULD_BUILD="true"
             echo "Version $LATEST_VERSION not found in registry - will build"
@@ -68,6 +74,8 @@ jobs:
           fi
           
           echo "should-build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+
+  # ... rest of the jobs remain the same
 
   build-and-push:
     needs: check-version
