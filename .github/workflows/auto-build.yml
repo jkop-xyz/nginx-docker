@@ -22,20 +22,19 @@ jobs:
       - name: Check nginx version
         id: version-check
         run: |
-          # Method 1: Try Alpine package repository
-          echo "Checking Alpine package repository..."
-          LATEST_VERSION=$(wget -qO- "https://pkgs.alpinelinux.org/packages?name=nginx&branch=v3.19&repo=main&arch=x86_64" | grep -oP 'nginx-\K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+          # Get the actual nginx version that would be installed in Alpine
+          echo "Getting nginx version from Alpine..."
+          LATEST_VERSION=$(docker run --rm alpine:latest sh -c '
+            apk add --no-cache nginx >/dev/null 2>&1
+            nginx -v 2>&1 | grep -oP "nginx/\K[0-9]+\.[0-9]+\.[0-9]+"
+          ')
           
-          # Method 2: If that fails, try a different approach
-          if [ -z "$LATEST_VERSION" ]; then
-            echo "Trying alternative method..."
-            LATEST_VERSION=$(docker run --rm alpine:latest sh -c 'apk update >/dev/null 2>&1 && apk info nginx | grep -oP "nginx-\K[0-9]+\.[0-9]+\.[0-9]+"' || echo "")
-          fi
+          echo "Detected nginx version: $LATEST_VERSION"
           
-          # Method 3: Fallback to a known recent version if detection fails
-          if [ -z "$LATEST_VERSION" ]; then
-            echo "Version detection failed, using fallback version"
-            LATEST_VERSION="1.24.0"
+          # Validate version format
+          if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format: $LATEST_VERSION"
+            exit 1
           fi
           
           # Get current image version from registry (if exists)
@@ -50,12 +49,6 @@ jobs:
           
           echo "Latest version: $LATEST_VERSION"
           echo "Current version: $CURRENT_VERSION"
-          
-          # Validate version format
-          if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version format: $LATEST_VERSION"
-            exit 1
-          fi
           
           echo "nginx-version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           
